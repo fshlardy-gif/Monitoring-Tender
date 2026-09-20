@@ -1,4 +1,5 @@
 import io
+import sqlite3
 import streamlit as st
 import pandas as pd
 import requests
@@ -8,7 +9,84 @@ from bs4 import BeautifulSoup
 st.set_page_config(page_title="Monitoring Tender LPSE", layout="wide")
 
 # ==========================================
-# 1. FUNGSI SCRAPING PEMENANG LPSE
+# 1. KONEKSI & INISIALISASI DATABASE SQLITE
+# ==========================================
+DB_FILE = "tender_data.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS tender (
+            id_paket TEXT PRIMARY KEY,
+            nama_tender TEXT,
+            nilai_hps REAL,
+            harga_penawaran REAL,
+            harga_negosiasi REAL,
+            tenaga_ahli TEXT,
+            tenaga_pendukung TEXT,
+            status_internal TEXT,
+            url_lpse TEXT,
+            pemenang TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def load_data():
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query("SELECT * FROM tender", conn)
+    conn.close()
+    # Format ulang nama kolom agar sesuai tampilan
+    df.rename(columns={
+        'id_paket': 'ID Paket',
+        'nama_tender': 'Nama Tender',
+        'nilai_hps': 'Nilai HPS (Rp)',
+        'harga_penawaran': 'Harga Penawaran (Rp)',
+        'harga_negosiasi': 'Harga Negosiasi (Rp)',
+        'tenaga_ahli': 'Tenaga Ahli',
+        'tenaga_pendukung': 'Tenaga Pendukung',
+        'status_internal': 'Status Internal',
+        'url_lpse': 'URL LPSE',
+        'pemenang': 'Pemenang'
+    }, inplace=True)
+    return df
+
+def save_data(data_dict):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        INSERT OR REPLACE INTO tender 
+        (id_paket, nama_tender, nilai_hps, harga_penawaran, harga_negosiasi, tenaga_ahli, tenaga_pendukung, status_internal, url_lpse, pemenang)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        data_dict['ID Paket'], data_dict['Nama Tender'], data_dict['Nilai HPS (Rp)'],
+        data_dict['Harga Penawaran (Rp)'], data_dict['Harga Negosiasi (Rp)'],
+        data_dict['Tenaga Ahli'], data_dict['Tenaga Pendukung'],
+        data_dict['Status Internal'], data_dict['URL LPSE'], data_dict['Pemenang']
+    ))
+    conn.commit()
+    conn.close()
+
+def delete_data(id_paket):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM tender WHERE id_paket = ?", (id_paket,))
+    conn.commit()
+    conn.close()
+
+def update_pemenang_db(id_paket, pemenang):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE tender SET pemenang = ? WHERE id_paket = ?", (pemenang, id_paket))
+    conn.commit()
+    conn.close()
+
+# Jalankan inisialisasi tabel database
+init_db()
+
+# ==========================================
+# 2. FUNGSI SCRAPING PEMENANG LPSE
 # ==========================================
 def dapatkan_pemenang_lpse(url_lpse):
     if not url_lpse:
@@ -26,19 +104,11 @@ def dapatkan_pemenang_lpse(url_lpse):
     except Exception as e:
         return f"Error: {str(e)}"
 
-# ==========================================
-# 2. INISIALISASI DATASET
-# ==========================================
-if 'df_tender' not in st.session_state:
-    st.session_state.df_tender = pd.DataFrame(columns=[
-        'ID Paket', 'Nama Tender', 'Nilai HPS (Rp)', 
-        'Harga Penawaran (Rp)', 'Harga Negosiasi (Rp)',
-        'Tenaga Ahli', 'Tenaga Pendukung',
-        'Status Internal', 'URL LPSE', 'Pemenang'
-    ])
+# Read Data dari SQLite
+df_tender = load_data()
 
 # ==========================================
-# 3. SIDEBAR (TAMBAH & HAPUS TENDER)
+# 3. SIDEBAR (TAMBAH & HAPUS PAKET)
 # ==========================================
 st.sidebar.title("➕ Tambah Tender Baru")
 id_paket = st.sidebar.text_input("ID Paket")
@@ -68,11 +138,8 @@ if st.sidebar.button("Simpan Paket"):
             'URL LPSE': url_lpse,
             'Pemenang': '-'
         }
-        st.session_state.df_tender = pd.concat(
-            [st.session_state.df_tender, pd.DataFrame([new_data])], 
-            ignore_index=True
-        )
-        st.sidebar.success("Paket Berhasil Disimpan!")
+        save_data(new_data)
+        st.sidebar.success("Paket Berhasil Disimpan Permanen!")
         st.rerun()
     else:
         st.sidebar.error("ID Paket dan Nama Tender wajib diisi!")
@@ -81,14 +148,12 @@ if st.sidebar.button("Simpan Paket"):
 st.sidebar.markdown("---")
 st.sidebar.title("🗑️ Hapus Tender")
 
-if not st.session_state.df_tender.empty:
-    list_id_hapus = st.session_state.df_tender['ID Paket'].tolist()
+if not df_tender.empty:
+    list_id_hapus = df_tender['ID Paket'].tolist()
     paket_to_delete = st.sidebar.selectbox("Pilih ID Paket yang Akan Dihapus", list_id_hapus)
     
     if st.sidebar.button("Hapus Paket", type="primary"):
-        st.session_state.df_tender = st.session_state.df_tender[
-            st.session_state.df_tender['ID Paket'] != paket_to_delete
-        ].reset_index(drop=True)
+        delete_data(paket_to_delete)
         st.sidebar.success(f"Paket {paket_to_delete} berhasil dihapus!")
         st.rerun()
 else:
@@ -101,9 +166,9 @@ st.title("📊 Dashboard Monitoring Laporan Tender LPSE PU")
 
 # Metric Ringkasan
 col1, col2, col3 = st.columns(3)
-total_paket = len(st.session_state.df_tender)
-total_hps = st.session_state.df_tender['Nilai HPS (Rp)'].sum() if total_paket > 0 else 0
-total_menang = len(st.session_state.df_tender[st.session_state.df_tender['Status Internal'] == 'Menang'])
+total_paket = len(df_tender)
+total_hps = df_tender['Nilai HPS (Rp)'].sum() if total_paket > 0 else 0
+total_menang = len(df_tender[df_tender['Status Internal'] == 'Menang']) if total_paket > 0 else 0
 
 col1.metric("Total Paket Diikuti", total_paket)
 col2.metric("Total Nilai HPS", f"Rp {total_hps:,.0f}")
@@ -116,20 +181,20 @@ col_btn1, col_btn2 = st.columns([1, 1])
 
 with col_btn1:
     if st.button("🔄 Update Jadwal Semua Lelang dari LPSE"):
-        if not st.session_state.df_tender.empty:
+        if not df_tender.empty:
             with st.spinner("Mengambil data pemenang dari LPSE..."):
-                for index, row in st.session_state.df_tender.iterrows():
+                for index, row in df_tender.iterrows():
                     url = row['URL LPSE']
                     pemenang = dapatkan_pemenang_lpse(url)
-                    st.session_state.df_tender.at[index, 'Pemenang'] = pemenang
+                    update_pemenang_db(row['ID Paket'], pemenang)
                 st.success("Data Pemenang Berhasil Diperbarui!")
                 st.rerun()
 
 with col_btn2:
-    if not st.session_state.df_tender.empty:
+    if not df_tender.empty:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            st.session_state.df_tender.to_excel(writer, index=False, sheet_name='Monitoring Tender')
+            df_tender.to_excel(writer, index=False, sheet_name='Monitoring Tender')
         processed_data = output.getvalue()
         
         st.download_button(
@@ -142,9 +207,9 @@ with col_btn2:
 # Tampilkan Tabel Utama
 st.subheader("📋 Daftar Monitoring Lelang Aktif")
 
-if not st.session_state.df_tender.empty:
+if not df_tender.empty:
     st.dataframe(
-        st.session_state.df_tender,
+        df_tender,
         column_config={
             "ID Paket": st.column_config.TextColumn("ID Paket"),
             "Nama Tender": st.column_config.TextColumn("Nama Tender / Paket", width="large"),
