@@ -227,6 +227,3 @@ if not df_tender.empty:
     )
 else:
     st.info("Belum ada data paket lelang yang dimasukkan.")
-    )
-else:
-    st.warning("Data belum tersedia atau sedang memuat dari Google Sheets...")
