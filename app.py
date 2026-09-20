@@ -27,7 +27,7 @@ def load_data_from_sheets():
 # 2. FUNGSI SCRAPING PEMENANG LPSE
 # ==========================================
 def dapatkan_pemenang_lpse(url_lpse):
-    if not url_lpse or pd.isna(url_lpse) or str(url_lpse).strip() == "-":
+    if not url_lpse or pd.isna(url_lpse) or str(url_lpse).strip() in ["-", "", "None", "nan"]:
         return "-"
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -49,27 +49,35 @@ df_tender = load_data_from_sheets()
 # 3. DASHBOARD UTAMA
 # ==========================================
 st.title("📊 Dashboard Monitoring Laporan Tender LPSE PU")
-st.info("💡 Website ini terhubung langsung dengan Google Sheets. Setiap perubahan di Spreadsheet akan otomatis memperbarui tampilan di sini.")
+st.info("💡 Website terhubung dengan Google Sheets. Total Harga Negosiasi di atas kini menghitung khusus paket lelang yang **Menang**.")
 
 if not df_tender.empty:
-    # Pembersihan kolom angka
+    # --------------------------------------------------
+    # PEMBERSIHAN DATA
+    # --------------------------------------------------
+    df_tender = df_tender.fillna("-")
+    df_tender = df_tender.replace(["None", "nan", "NaN", ""], "-")
+
+    # Pembersihan khusus kolom angka/uang
     kolom_uang = ['Nilai HPS (Rp)', 'Harga Penawaran (Rp)', 'Harga Negosiasi (Rp)']
     for col in kolom_uang:
         if col in df_tender.columns:
-            df_tender[col] = df_tender[col].astype(str).str.replace(r'[^\d]', '', regex=True)
-            df_tender[col] = pd.to_numeric(df_tender[col], errors='coerce').fillna(0)
+            s_clean = df_tender[col].astype(str).str.replace(r'[^\d]', '', regex=True)
+            df_tender[col] = pd.to_numeric(s_clean, errors='coerce').fillna(0)
 
+    # Identifikasi Paket Menang
+    is_menang = df_tender['Status Internal'].astype(str).str.strip().str.lower() == 'menang' if 'Status Internal' in df_tender.columns else pd.Series([False]*len(df_tender))
+    
+    # Hitung Total Harga Negosiasi KHUSUS Paket Menang
+    total_negosiasi_menang = df_tender.loc[is_menang, 'Harga Negosiasi (Rp)'].sum() if 'Harga Negosiasi (Rp)' in df_tender.columns else 0
+    
     # Metric Ringkasan
     col1, col2, col3 = st.columns(3)
     total_paket = len(df_tender)
-    total_negosiasi = df_tender['Harga Negosiasi (Rp)'].sum() if 'Harga Negosiasi (Rp)' in df_tender.columns else 0
-    
-    total_menang = 0
-    if 'Status Internal' in df_tender.columns:
-        total_menang = len(df_tender[df_tender['Status Internal'].astype(str).str.lower() == 'menang'])
+    total_menang = is_menang.sum()
 
     col1.metric("Total Paket Diikuti", total_paket)
-    col2.metric("Total Harga Negosiasi", f"Rp {total_negosiasi:,.0f}".replace(",", "."))
+    col2.metric("Total Harga Negosiasi (Menang)", f"Rp {total_negosiasi_menang:,.0f}".replace(",", "."))
     col3.metric("Tender Menang", total_menang)
 
     st.markdown("---")
@@ -95,17 +103,31 @@ if not df_tender.empty:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # Pemformatan Tampilan Rupiah (Contoh: Rp 4.285.882.915)
+    # Pemformatan Tampilan Teks & Uang
     df_tampil = df_tender.copy()
+    
     def format_rupiah(val):
         try:
-            return f"Rp {int(val):,}".replace(",", ".")
+            val_int = int(val)
+            if val_int == 0:
+                return "Rp 0"
+            return f"Rp {val_int:,}".replace(",", ".")
         except:
             return "Rp 0"
+
+    # Tambahkan Kolom "Nilai Negosiasi Menang"
+    df_tampil['Tender Menang (Rp)'] = df_tender.apply(
+        lambda row: format_rupiah(row['Harga Negosiasi (Rp)']) if str(row.get('Status Internal', '')).strip().lower() == 'menang' else "-", 
+        axis=1
+    )
 
     for col in kolom_uang:
         if col in df_tampil.columns:
             df_tampil[col] = df_tampil[col].apply(format_rupiah)
+
+    # Memastikan tidak ada sisa None di tampilan akhir
+    df_tampil = df_tampil.fillna("-")
+    df_tampil = df_tampil.replace(["None", "nan", "NaN", ""], "-")
 
     # Tampilkan Tabel Utama
     st.subheader("📋 Daftar Monitoring Lelang Aktif")
