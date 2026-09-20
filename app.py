@@ -37,6 +37,7 @@ def load_data():
     conn = sqlite3.connect(DB_FILE)
     df = pd.read_sql_query("SELECT * FROM tender", conn)
     conn.close()
+    
     # Format ulang nama kolom agar sesuai tampilan
     df.rename(columns={
         'id_paket': 'ID Paket',
@@ -164,10 +165,12 @@ else:
 # ==========================================
 st.title("📊 Dashboard Monitoring Laporan Tender LPSE PU")
 
-# Metric Ringkasan (Total HPS diganti menjadi Total Harga Negosiasi)
+# Metric Ringkasan
 col1, col2, col3 = st.columns(3)
 total_paket = len(df_tender)
-total_negosiasi = df_tender['Harga Negosiasi (Rp)'].sum() if total_paket > 0 else 0
+
+# Hitung Total Harga Negosiasi dari data asli sebelum diformat
+total_negosiasi = pd.to_numeric(df_tender['Harga Negosiasi (Rp)'], errors='coerce').sum() if total_paket > 0 else 0
 total_menang = len(df_tender[df_tender['Status Internal'] == 'Menang']) if total_paket > 0 else 0
 
 col1.metric("Total Paket Diikuti", total_paket)
@@ -208,14 +211,29 @@ with col_btn2:
 st.subheader("📋 Daftar Monitoring Lelang Aktif")
 
 if not df_tender.empty:
+    # Salin dataframe untuk pemformatan tampilan
+    df_tampil = df_tender.copy()
+    
+    # Fungsi pemformat Rupiah secara paksa
+    def format_rupiah(val):
+        try:
+            return f"Rp {float(val):,.0f}"
+        except:
+            return val
+
+    # Terapkan format pemisah ribuan ke kolom uang
+    df_tampil['Nilai HPS (Rp)'] = df_tampil['Nilai HPS (Rp)'].apply(format_rupiah)
+    df_tampil['Harga Penawaran (Rp)'] = df_tampil['Harga Penawaran (Rp)'].apply(format_rupiah)
+    df_tampil['Harga Negosiasi (Rp)'] = df_tampil['Harga Negosiasi (Rp)'].apply(format_rupiah)
+
     st.dataframe(
-        df_tender,
+        df_tampil,
         column_config={
             "ID Paket": st.column_config.TextColumn("ID Paket"),
             "Nama Tender": st.column_config.TextColumn("Nama Tender / Paket", width="large"),
-            "Nilai HPS (Rp)": st.column_config.NumberColumn("Nilai HPS", format="Rp %d"),
-            "Harga Penawaran (Rp)": st.column_config.NumberColumn("Harga Penawaran", format="Rp %d"),
-            "Harga Negosiasi (Rp)": st.column_config.NumberColumn("Harga Negosiasi", format="Rp %d"),
+            "Nilai HPS (Rp)": st.column_config.TextColumn("Nilai HPS"),
+            "Harga Penawaran (Rp)": st.column_config.TextColumn("Harga Penawaran"),
+            "Harga Negosiasi (Rp)": st.column_config.TextColumn("Harga Negosiasi"),
             "Tenaga Ahli": st.column_config.TextColumn("Tenaga Ahli"),
             "Tenaga Pendukung": st.column_config.TextColumn("Tenaga Pendukung"),
             "Status Internal": st.column_config.SelectboxColumn("Status Internal", options=["Kirim Penawaran", "Menang", "Kalah"]),
