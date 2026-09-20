@@ -87,37 +87,40 @@ def update_pemenang_db(id_paket, pemenang, url_lpse):
 init_db()
 
 # ==========================================
-# 2. FUNGSI SCRAPING PEMENANG VIA ID PAKET
+# 2. FUNGSI SCRAPING PEMENANG LPSE
 # ==========================================
-def dapatkan_pemenang_lpse_by_id(id_paket):
-    if not id_paket or str(id_paket).strip() in ["", "-", "None"]:
-        return "-", "-"
+def dapatkan_pemenang_lpse(url_lpse):
+    if not url_lpse or str(url_lpse).strip() in ["", "-", "None", "nan"]:
+        return "-"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+    }
 
-    id_clean = str(id_paket).split('.')[0].strip()
-    
-    # URL default untuk Non-Tender (PL)
-    url_lpse = f"https://spse.inaproc.id/pu/nontender/{id_clean}/pengumumanpl"
-    
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(url_lpse, headers=headers, timeout=8)
+        # verify=False menembus proteksi kendala SSL LPSE
+        response = requests.get(url_lpse, headers=headers, timeout=10, verify=False)
         
-        # Jika bukan Non-Tender, coba URL Lelang biasa/Tender
-        if response.status_code != 200:
-            url_lpse = f"https://spse.inaproc.id/pu/lelang/{id_clean}/pengumumanlelang"
-            response = requests.get(url_lpse, headers=headers, timeout=8)
-
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
-            pemenang_element = soup.find('td', string=lambda t: t and 'Pemenang' in t)
-            if pemenang_element:
-                pemenang_text = pemenang_element.find_next_sibling('td').text.strip()
-                return pemenang_text, url_lpse
-            return "Belum Ada Pemenang", url_lpse
             
-        return "Gagal Akses LPSE", url_lpse
+            # Cari baris tabel yang mengandung kata 'Pemenang'
+            for tr in soup.find_all('tr'):
+                th_or_td = tr.find(['th', 'td'])
+                if th_or_td and 'pemenang' in th_or_td.text.lower():
+                    tds = tr.find_all('td')
+                    if len(tds) > 1:
+                        pemenang_nama = tds[1].text.strip()
+                        if pemenang_nama:
+                            return pemenang_nama
+                            
+            return "Belum Ada Pemenang"
+            
+        return "Gagal Akses LPSE"
     except Exception as e:
-        return "Error Akses", url_lpse
+        return "Gagal Akses LPSE"
 
 # Read Data dari SQLite
 df_tender = load_data()
