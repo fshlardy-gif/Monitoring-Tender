@@ -164,14 +164,14 @@ else:
 # ==========================================
 st.title("📊 Dashboard Monitoring Laporan Tender LPSE PU")
 
-# Metric Ringkasan
+# Metric Ringkasan (Total HPS diganti menjadi Total Harga Negosiasi)
 col1, col2, col3 = st.columns(3)
 total_paket = len(df_tender)
-total_hps = df_tender['Nilai HPS (Rp)'].sum() if total_paket > 0 else 0
+total_negosiasi = df_tender['Harga Negosiasi (Rp)'].sum() if total_paket > 0 else 0
 total_menang = len(df_tender[df_tender['Status Internal'] == 'Menang']) if total_paket > 0 else 0
 
 col1.metric("Total Paket Diikuti", total_paket)
-col2.metric("Total Nilai HPS", f"Rp {total_hps:,.0f}")
+col2.metric("Total Harga Negosiasi", f"Rp {total_negosiasi:,.0f}")
 col3.metric("Tender Menang", total_menang)
 
 st.markdown("---")
