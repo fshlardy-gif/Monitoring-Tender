@@ -76,10 +76,10 @@ def delete_data(id_paket):
     conn.commit()
     conn.close()
 
-def update_pemenang_db(id_paket, pemenang):
+def update_pemenang_db(id_paket, pemenang, url_lpse):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("UPDATE tender SET pemenang = ? WHERE id_paket = ?", (pemenang, id_paket))
+    c.execute("UPDATE tender SET pemenang = ?, url_lpse = ? WHERE id_paket = ?", (pemenang, url_lpse, id_paket))
     conn.commit()
     conn.close()
 
@@ -87,23 +87,37 @@ def update_pemenang_db(id_paket, pemenang):
 init_db()
 
 # ==========================================
-# 2. FUNGSI SCRAPING PEMENANG LPSE
+# 2. FUNGSI SCRAPING PEMENANG VIA ID PAKET
 # ==========================================
-def dapatkan_pemenang_lpse(url_lpse):
-    if not url_lpse:
-        return "-"
+def dapatkan_pemenang_lpse_by_id(id_paket):
+    if not id_paket or str(id_paket).strip() in ["", "-", "None"]:
+        return "-", "-"
+
+    id_clean = str(id_paket).split('.')[0].strip()
+    
+    # URL default untuk Non-Tender (PL)
+    url_lpse = f"https://spse.inaproc.id/pu/nontender/{id_clean}/pengumumanpl"
+    
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url_lpse, headers=headers, timeout=10)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        response = requests.get(url_lpse, headers=headers, timeout=8)
+        
+        # Jika bukan Non-Tender, coba URL Lelang biasa/Tender
+        if response.status_code != 200:
+            url_lpse = f"https://spse.inaproc.id/pu/lelang/{id_clean}/pengumumanlelang"
+            response = requests.get(url_lpse, headers=headers, timeout=8)
+
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
-            pemenang_element = soup.find('td', text='Pemenang')
+            pemenang_element = soup.find('td', string=lambda t: t and 'Pemenang' in t)
             if pemenang_element:
-                return pemenang_element.find_next_sibling('td').text.strip()
-            return "Belum Ada Pemenang"
-        return "Gagal Akses LPSE"
+                pemenang_text = pemenang_element.find_next_sibling('td').text.strip()
+                return pemenang_text, url_lpse
+            return "Belum Ada Pemenang", url_lpse
+            
+        return "Gagal Akses LPSE", url_lpse
     except Exception as e:
-        return f"Error: {str(e)}"
+        return "Error Akses", url_lpse
 
 # Read Data dari SQLite
 df_tender = load_data()
@@ -123,10 +137,12 @@ tenaga_ahli = st.sidebar.text_area("Tenaga Ahli", placeholder="Contoh: 1 Team Le
 tenaga_pendukung = st.sidebar.text_area("Tenaga Pendukung", placeholder="Contoh: 1 Cad/Cam Operator, 1 Admin")
 
 status_internal = st.sidebar.selectbox("Status Internal", ["Kirim Penawaran", "Menang", "Kalah"])
-url_lpse = st.sidebar.text_input("URL Detail Paket LPSE PU")
 
 if st.sidebar.button("Simpan Paket"):
     if id_paket and nama_tender:
+        # Otomatis buat URL berdasarkan ID Paket saat disimpan
+        url_generated = f"https://spse.inaproc.id/pu/nontender/{id_paket.strip()}/pengumumanpl"
+        
         new_data = {
             'ID Paket': id_paket,
             'Nama Tender': nama_tender,
@@ -136,7 +152,7 @@ if st.sidebar.button("Simpan Paket"):
             'Tenaga Ahli': tenaga_ahli if tenaga_ahli else "-",
             'Tenaga Pendukung': tenaga_pendukung if tenaga_pendukung else "-",
             'Status Internal': status_internal,
-            'URL LPSE': url_lpse,
+            'URL LPSE': url_generated,
             'Pemenang': '-'
         }
         save_data(new_data)
@@ -169,7 +185,6 @@ st.title("📊 Dashboard Monitoring Laporan Tender LPSE PU")
 col1, col2, col3 = st.columns(3)
 total_paket = len(df_tender)
 
-# Hitung Total Harga Negosiasi dari data asli sebelum diformat
 total_negosiasi = pd.to_numeric(df_tender['Harga Negosiasi (Rp)'], errors='coerce').sum() if total_paket > 0 else 0
 total_menang = len(df_tender[df_tender['Status Internal'] == 'Menang']) if total_paket > 0 else 0
 
@@ -187,9 +202,8 @@ with col_btn1:
         if not df_tender.empty:
             with st.spinner("Mengambil data pemenang dari LPSE..."):
                 for index, row in df_tender.iterrows():
-                    url = row['URL LPSE']
-                    pemenang = dapatkan_pemenang_lpse(url)
-                    update_pemenang_db(row['ID Paket'], pemenang)
+                    pemenang, url_valid = dapatkan_pemenang_lpse_by_id(row['ID Paket'])
+                    update_pemenang_db(row['ID Paket'], pemenang, url_valid)
                 st.success("Data Pemenang Berhasil Diperbarui!")
                 st.rerun()
 
@@ -211,17 +225,14 @@ with col_btn2:
 st.subheader("📋 Daftar Monitoring Lelang Aktif")
 
 if not df_tender.empty:
-    # Salin dataframe untuk pemformatan tampilan
     df_tampil = df_tender.copy()
     
-    # Fungsi pemformat Rupiah secara paksa
     def format_rupiah(val):
         try:
             return f"Rp {float(val):,.0f}"
         except:
             return val
 
-    # Terapkan format pemisah ribuan ke kolom uang
     df_tampil['Nilai HPS (Rp)'] = df_tampil['Nilai HPS (Rp)'].apply(format_rupiah)
     df_tampil['Harga Penawaran (Rp)'] = df_tampil['Harga Penawaran (Rp)'].apply(format_rupiah)
     df_tampil['Harga Negosiasi (Rp)'] = df_tampil['Harga Negosiasi (Rp)'].apply(format_rupiah)
